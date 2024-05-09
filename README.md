@@ -1,6 +1,7 @@
 # ineuron
 Assignments - Full Stack Data Science Bootcamp
 ---
+```
 openapi: 3.0.0
 info:
   title: Task Management API
@@ -64,3 +65,4 @@ paths:
         '500':
           description: Internal server error. Something went wrong.
 
+```
