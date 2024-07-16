@@ -2,6 +2,7 @@
 Assignments - Full Stack Data Science Bootcamp
 ---
 ```
+
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from typing import List
@@ -54,8 +55,8 @@ def save_tasks_to_json(tasks: List[Task]):
         json.dump(data, f)
 
 # Define the endpoint to fetch tasks by request ID
-@app.get("/gettasksbyrequestid/{request_id}")
-async def get_tasks_by_request_id(request_id: str):
+@app.get("/gettaskidbyrequestid/{request_id}")
+async def get_task_id_by_request_id(request_id: str):
     file_path = get_file_path()
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="No data found for the current month")
@@ -72,9 +73,9 @@ async def add_tasks(tasks: List[Task], background_tasks: BackgroundTasks):
     background_tasks.add_task(save_tasks_to_json, tasks)
     return {"message": "Tasks are being processed"}
 
-# Define the endpoint to fetch all data
-@app.get("/fetchall")
-async def fetch_all():
+# Define the endpoint to fetch all data for the current month
+@app.get("/getmonthlydata")
+async def get_monthly_data():
     file_path = get_file_path()
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="No data found for the current month")
