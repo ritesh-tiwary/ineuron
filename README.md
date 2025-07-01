@@ -256,6 +256,254 @@ if __name__ == "__main__":
     else:
         print("Failed to process JSON file")
 ```
+
+```
+# base_task.py
+# ------------
+from abc import ABC, abstractmethod
+
+class BaseTask(ABC):
+    def __init__(self, config: dict):
+        self.config = config
+
+    def run(self):
+        self.validate()
+        self.execute()
+        self.prepare()
+        self.cleanup()
+
+    @abstractmethod
+    def validate(self):...
+
+    @abstractmethod
+    def execute(self):...
+
+    # optional override	
+    def prepare(self):...
+
+    def cleanup(self):...
+
+# extract_task.py
+# -----------------
+class ExtractTask(BaseTask):
+    def validate(self):
+        # Validate DB config, data source
+        pass
+
+    def execute(self):
+        # Load data into DB using SQLAlchemy / psycopg2 / etc.
+        pass
+
+# transform_task.py
+# -----------------
+class TransformTask(BaseTask):
+    def validate(self):
+        # Validate input file, schema, transformations
+        pass
+
+    def execute(self):
+        # Convert file format, alter rows/cols using Pandas
+        pass
+
+# load_task.py
+# -----------------
+class LoadTask(BaseTask):
+    def validate(self):
+        # Validate DB config, data source
+        pass
+
+    def execute(self):
+        # Load data into DB using SQLAlchemy / psycopg2 / etc.
+        pass
+
+
+import pandas as pd
+from sqlalchemy import create_engine
+from base_task import BaseTask
+
+
+class CsvToOracleTask(BaseTask):
+    def validate(self):
+        required_keys = ['csv_path', 'oracle_conn_str', 'table_name']
+        for key in required_keys:
+            if key not in self.config:
+                raise ValueError(f"Missing required config: {key}")
+
+    def execute(self):
+        csv_path = self.config['csv_path']
+        oracle_conn_str = self.config['oracle_conn_str']
+        table_name = self.config['table_name']
+        chunk_size = self.config.get('chunk_size', 5000)
+
+        print(f"Loading CSV from {csv_path} to Oracle table {table_name}...")
+
+        df_iter = pd.read_csv(csv_path, chunksize=chunk_size)
+        engine = create_engine(oracle_conn_str)
+
+        for i, chunk in enumerate(df_iter):
+            print(f"Inserting chunk {i + 1}")
+            chunk.to_sql(table_name, con=engine, if_exists='append', index=False, method='multi')
+
+        print("CSV load to Oracle complete.")
+
+# task_factory.py
+# ---------------
+from data_load_task import CsvToOracleTask
+from base_task import BaseTask
+
+class TaskFactory:
+    @staticmethod
+    def create(task_type: str, config: dict) -> BaseTask:
+        if task_type == "csv_to_oracle":
+            return CsvToOracleTask(config)
+        raise ValueError(f"Unsupported task type: {task_type}")
+
+# task_manager.py
+# ---------------
+from task_factory import TaskFactory
+from loguru import logger
+
+class TaskManager:
+    def __init__(self, task_configs: list[dict]):
+        self.task_configs = task_configs
+        self.active_tasks = []
+
+    def __enter__(self):
+        logger.info("TaskManager context initialized.")
+        # Placeholder: You can initialize shared resources here
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.info("TaskManager context exiting. Cleaning up...")
+        # Placeholder: Clean up shared resources if needed
+        if exc_type:
+            logger.error(f"Exception: {exc_type.__name__}, Message: {exc_val}")
+        return False  # Don't suppress exceptions
+
+    def run(self):
+        for conf in self.task_configs:
+            task = TaskFactory.create(conf["type"], conf)
+            self.active_tasks.append(task)
+            try:
+                logger.info(f"Running task of type: {conf['type']}")
+                task.execute()
+            except Exception as e:
+                logger.exception(f"Task of type {conf['type']} failed: {e}")
+
+
+# main.py
+# -------
+import json
+from task_manager import TaskManager
+
+def main():
+    with open('config.json') as f:
+        task_configs = json.load(f)
+
+     with TaskManager(task_configs) as t:
+        t.run()
+
+if __name__ == "__main__":
+    main()
+
+# config.json
+# -----------
+[
+  {
+    "type": "csv_to_oracle",
+    "csv_path": "input_data.csv",
+    "oracle_conn_str": "oracle+cx_oracle://username:password@hostname:port/service_name",
+    "table_name": "TARGET_TABLE",
+    "chunk_size": 1000
+  }
+]
+
+# extract_config.json
+# -------------------
+{
+  "source_type": "csv",
+  "csv": {
+    "path": "input_data.csv",
+    "encoding": "utf-8",
+    "delimiter": ",",
+    "header": true,
+    "chunk_size": 1000
+  },
+  "database": {
+    "enabled": false,
+    "conn_str": "oracle+cx_oracle://username:password@host:1521/service",
+    "query": "SELECT * FROM source_table"
+  },
+  "api": {
+    "enabled": false,
+    "url": "https://api.example.com/data",
+    "headers": {
+      "Authorization": "Bearer <your-token>"
+    },
+    "params": {
+      "start_date": "2024-01-01",
+      "end_date": "2024-01-31"
+    }
+  }
+}
+
+# transform_config.json
+# -------------------
+{
+  "enabled": true,
+  "drop_columns": ["unwanted_column"],
+  "rename_columns": {
+    "old_name": "new_name",
+    "amount": "total_amount"
+  },
+  "add_columns": [
+    {
+      "name": "load_date",
+      "default": "NOW"  // could be "NOW", "STATIC", or a value
+    }
+  ],
+  "filter_conditions": [
+    {
+      "column": "amount",
+      "operator": ">",
+      "value": 100
+    }
+  ],
+  "column_types": {
+    "id": "int",
+    "total_amount": "float"
+  },
+  "deduplicate_on": ["id"]
+}
+
+# load_config.json
+# ----------------
+{
+  "destination_type": "oracle",
+  "oracle": {
+    "conn_str": "oracle+cx_oracle://username:password@localhost:1521/orclpdb1",
+    "table_name": "TARGET_TABLE",
+    "write_mode": "append",  // or "replace", "upsert"
+    "batch_size": 1000,
+    "parallel": true,
+    "upsert_keys": ["id"],
+    "truncate_before_load": false
+  },
+  "csv": {
+    "enabled": false,
+    "path": "output_data.csv",
+    "index": false
+  },
+  "s3": {
+    "enabled": false,
+    "bucket": "my-bucket",
+    "key": "output/etl.csv",
+    "aws_access_key": "xxx",
+    "aws_secret_key": "yyy"
+  }
+}
+```
+
 ```
 Thank you for reaching out. We’re aware of the issue and are actively working on a resolution. Our team is prioritizing this, and I’ll provide you with an update as soon as it’s resolved.
 
