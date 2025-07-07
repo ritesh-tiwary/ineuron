@@ -505,6 +505,46 @@ if __name__ == "__main__":
 ```
 
 ```
+Task,Description
+Create project repo,Initialize Git repository and folder structure
+Define dependencies,"Create requirements.txt (pandas, sqlalchemy, loguru, cx_Oracle, pyodbc, etc.)"
+Setup virtual environment,Use venv or poetry for isolation
+Define BaseTask,"Abstract class for all ETL steps with run(), validate(), etc."
+Implement TaskFactory,Dynamically create task instances based on type
+Build TaskManager,Handle task orchestration via context manager
+Implement config-driven orchestration,Use config.json or YAML to define ETL jobs
+CSV Extractor,Read chunked CSV input
+Database Extractor,Query Oracle or Sybase source systems (optional)
+API Extractor,Add ability to extract from REST endpoints (optional)
+Column drop/rename,Based on config
+Type conversion,"str → int, float, datetime, etc."
+Filtering,Row-level filters based on column conditions
+Add derived columns,"Support for load_date, default values, etc."
+Deduplication logic,Drop duplicates by primary key or full row
+Oracle Load Task,Chunked or batched inserts with to_sql
+Sybase Load Task,Use sqlalchemy + pyodbc with FreeTDS
+CSV Writer,Write final result to local file
+S3 Upload,Upload CSV to S3 bucket using boto3
+Extract config,"extract_config.json (source type, file path, query, API)"
+Transform config,"transform_config.json (rename, drop, filters, types)"
+Load config,"load_config.json (DB destination, batch size, upsert, truncate)"
+Unified schema,Optional: merge all 3 configs into one task config
+Pydantic models for config,Validate JSON/YAML structure with helpful errors
+Retry mechanism,Use tenacity or custom retry logic for DB inserts
+Graceful error logging,Ensure failed chunks log clearly without killing the full pipeline
+Centralized logger,"Use loguru for file+console logging, log per task run"
+Resource cleanup,"Close DB connections, release memory chunks"
+Temporary file handler,Auto-delete intermediate files after success
+Unit tests,"For each Task type (extraction, transformation, load)"
+Integration tests,Run full pipeline on small dummy dataset
+Data validation post-load,"Row count, checksum, and sampling validations"
+CLI Interface,Add argparse or Typer-based CLI to trigger ETL runs
+Scheduled execution,"Use cron, APScheduler, or Celery beat for scheduled tasks"
+Dockerize,Add Dockerfile for containerized execution
+CI/CD,"GitHub Actions or similar for tests, linting, and packaging"
+```
+
+```
 Thank you for reaching out. We’re aware of the issue and are actively working on a resolution. Our team is prioritizing this, and I’ll provide you with an update as soon as it’s resolved.
 
 If there’s a specific deadline or additional details you’d like to share, please let me know, and we’ll do our best to accommodate.
