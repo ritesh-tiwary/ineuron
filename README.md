@@ -543,7 +543,12 @@ Scheduled execution,"Use cron, APScheduler, or Celery beat for scheduled tasks"
 Dockerize,Add Dockerfile for containerized execution
 CI/CD,"GitHub Actions or similar for tests, linting, and packaging"
 ```
+```
+JIRA Epic: Secure FastAPI Services with Kong JWT Middleware
 
+Description:
+Develop a reusable, organization-wide FastAPI middleware that enforces authentication using JWT headers forwarded by Kong Gateway. This epic ensures all services consistently block unauthenticated access and provide authenticated user context through standard dependencies.
+```
 ```
 Thank you for reaching out. We’re aware of the issue and are actively working on a resolution. Our team is prioritizing this, and I’ll provide you with an update as soon as it’s resolved.
 
