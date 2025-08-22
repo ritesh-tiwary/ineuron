@@ -503,6 +503,229 @@ if __name__ == "__main__":
   }
 }
 ```
+```
+# app.py
+import asyncio
+import hashlib
+import queue
+from time import time
+from typing import Iterator, Optional
+
+import boto3
+from fastapi import FastAPI, Request, Header, HTTPException
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+app = FastAPI()
+
+# >>> IMPORTANT: don't make this a tuple (no trailing comma)
+bucket_name = "your-bucket"
+s3_client = boto3.client("s3")
+
+
+def upload_part(bucket: str, key: str, upload_id: str, part_number: int, data: bytes):
+    """
+    Blocking call that uploads a single part to S3 and returns the descriptor needed by CompleteMultipartUpload.
+    """
+    response = s3_client.upload_part(
+        Bucket=bucket,
+        Key=key,
+        PartNumber=part_number,
+        UploadId=upload_id,
+        Body=data,
+    )
+    return {"ETag": response["ETag"], "PartNumber": part_number}
+
+
+def _iter_from_queue(q: "queue.Queue[Optional[bytes]]") -> Iterator[bytes]:
+    """
+    Blocking iterator that yields bytes from a Queue until it receives None (sentinel).
+    """
+    while True:
+        chunk = q.get()
+        if chunk is None:
+            break
+        yield chunk
+
+
+def s3_multipart_upload_with_md5_from_iter(
+    byte_iter: Iterator[bytes],
+    object_key: str,
+    expected_md5: str,
+    part_size: int = 10 * 1024 * 1024,
+    max_workers: int = 5,
+) -> str:
+    """
+    Blocking function:
+      - Consumes an iterator of bytes (streamed from FastAPI request),
+      - Computes MD5 over the entire payload,
+      - Performs S3 multipart upload in parallel,
+      - Verifies MD5 and completes/aborts accordingly.
+    """
+    md5 = hashlib.md5()
+    response = s3_client.create_multipart_upload(Bucket=bucket_name, Key=object_key)
+    upload_id = response["UploadId"]
+
+    parts = []
+    part_number = 1
+    futures = []
+
+    try:
+        # We’ll fill parts up to `part_size` using a buffer
+        buf = bytearray()
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+
+        for chunk in byte_iter:
+            if not chunk:
+                continue
+            md5.update(chunk)
+            mv = memoryview(chunk)
+            offset = 0
+
+            # Fill up buf to full parts, submit as we go
+            while offset < len(mv):
+                remaining = part_size - len(buf)
+                take = min(remaining, len(mv) - offset)
+                buf.extend(mv[offset : offset + take])
+                offset += take
+
+                if len(buf) == part_size:
+                    data = bytes(buf)  # materialize the part
+                    # submit upload of this full part
+                    futures.append(
+                        executor.submit(
+                            upload_part,
+                            bucket_name,
+                            object_key,
+                            upload_id,
+                            part_number,
+                            data,
+                        )
+                    )
+                    part_number += 1
+                    buf.clear()
+
+        # Final (possibly partial) part
+        if buf:
+            data = bytes(buf)
+            futures.append(
+                executor.submit(
+                    upload_part, bucket_name, object_key, upload_id, part_number, data
+                )
+            )
+            part_number += 1
+            buf.clear()
+
+        # Collect uploaded parts
+        for fut in as_completed(futures):
+            parts.append(fut.result())
+
+        # Stop the executor
+        executor.shutdown(wait=True)
+
+        # Sort by PartNumber as AWS requires ordered list
+        parts.sort(key=lambda x: x["PartNumber"])
+
+        # Validate MD5
+        calculated_md5 = md5.hexdigest()
+        if calculated_md5 != expected_md5.lower():
+            s3_client.abort_multipart_upload(
+                Bucket=bucket_name, Key=object_key, UploadId=upload_id
+            )
+            raise ValueError(
+                f"Checksum mismatch! Expected: {expected_md5}, Calculated: {calculated_md5}"
+            )
+
+        # Complete upload
+        s3_client.complete_multipart_upload(
+            Bucket=bucket_name,
+            Key=object_key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+
+        # Optional: tag the object with MD5
+        s3_client.put_object_tagging(
+            Bucket=bucket_name,
+            Key=object_key,
+            Tagging={"TagSet": [{"Key": "md5", "Value": calculated_md5}]},
+        )
+
+        return calculated_md5
+
+    except Exception:
+        # Abort on any error
+        try:
+            s3_client.abort_multipart_upload(
+                Bucket=bucket_name, Key=object_key, UploadId=upload_id
+            )
+        except Exception:
+            pass
+        raise
+
+
+@app.post("/upload")
+async def upload(
+    request: Request,
+    filename: str = Header(..., alias="X-Filename"),
+    content_md5: str = Header(..., alias="X-Content-MD5"),
+):
+    """
+    Streaming upload endpoint:
+      - Producer: async reads request.stream() and pushes chunks to a queue.
+      - Consumer: blocking S3 multipart uploader runs in a worker thread pulling from the queue.
+    No custom event loops. No cross-loop futures. Clean shutdown.
+    """
+    start = time()
+
+    # Backpressure-friendly buffer between async stream and blocking uploader
+    q: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=50)
+
+    async def producer():
+        try:
+            async for chunk in request.stream():
+                # Optionally guard zero-length chunks
+                if chunk:
+                    q.put(chunk)  # put() is blocking; natural backpressure
+        finally:
+            # Signal completion
+            q.put(None)
+
+    # Kick off the producer in the current (uvicorn) loop
+    prod_task = asyncio.create_task(producer())
+
+    # Run the blocking S3 uploader in a default thread pool
+    loop = asyncio.get_running_loop()
+    try:
+        md5_hash: str = await loop.run_in_executor(
+            None,
+            lambda: s3_multipart_upload_with_md5_from_iter(
+                _iter_from_queue(q),
+                object_key=filename,
+                expected_md5=content_md5,
+                part_size=10 * 1024 * 1024,
+                max_workers=5,
+            ),
+        )
+    except ValueError as ve:
+        # MD5 mismatch, etc.
+        # Make sure producer finishes (it should quickly after client body is read)
+        await prod_task
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        await prod_task
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e!s}")
+
+    # Ensure producer ended cleanly (queue got sentinel)
+    await prod_task
+
+    end = time()
+    return {
+        "method": "multipart-parallel-md5",
+        "duration_sec": round(end - start, 2),
+        "md5": md5_hash,
+    }
+
+```
 
 ```
 Thank you for reaching out. We’re aware of the issue and are actively working on a resolution. Our team is prioritizing this, and I’ll provide you with an update as soon as it’s resolved.
