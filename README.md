@@ -680,15 +680,34 @@ async def upload(
     # Backpressure-friendly buffer between async stream and blocking uploader
     q: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=50)
 
-    async def producer():
-        try:
-            async for chunk in request.stream():
-                # Optionally guard zero-length chunks
-                if chunk:
-                    q.put(chunk)  # put() is blocking; natural backpressure
-        finally:
-            # Signal completion
-            q.put(None)
+    import queue
+
+async def producer():
+    try:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+
+            while True:
+                # offload blocking q.put with timeout into executor
+                success = await loop.run_in_executor(
+                    None,
+                    lambda: q.put(chunk, timeout=0.1)  # waits max 0.1s
+                )
+                if success is None:  # q.put returns None if succeeded
+                    break
+                # if timeout happened, just retry
+                await asyncio.sleep(0.01)
+
+    finally:
+        # push sentinel (None) so consumer knows we're done
+        while True:
+            try:
+                q.put_nowait(None)
+                break
+            except queue.Full:
+                await asyncio.sleep(0.01)
+
 
     # Kick off the producer in the current (uvicorn) loop
     prod_task = asyncio.create_task(producer())
