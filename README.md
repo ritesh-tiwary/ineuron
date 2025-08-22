@@ -689,24 +689,23 @@ async def producer():
                 continue
 
             while True:
-                # offload blocking q.put with timeout into executor
-                success = await loop.run_in_executor(
-                    None,
-                    lambda: q.put(chunk, timeout=0.1)  # waits max 0.1s
-                )
-                if success is None:  # q.put returns None if succeeded
-                    break
-                # if timeout happened, just retry
-                await asyncio.sleep(0.01)
+                try:
+                    # try to enqueue with timeout in executor
+                    await loop.run_in_executor(None, lambda: q.put(chunk, timeout=0.1))
+                    break  # success
+                except queue.Full:
+                    # queue still full, backoff and retry
+                    await asyncio.sleep(0.01)
 
     finally:
-        # push sentinel (None) so consumer knows we're done
+        # enqueue sentinel
         while True:
             try:
                 q.put_nowait(None)
                 break
             except queue.Full:
                 await asyncio.sleep(0.01)
+
 
 
     # Kick off the producer in the current (uvicorn) loop
