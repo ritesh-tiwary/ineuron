@@ -785,6 +785,112 @@ async def upload(
 ```
 
 ```
+import paramiko
+import socket
+import logging
+from contextlib import contextmanager
+from time import sleep
+
+
+class SFTPClient:
+    def __init__(self, host, port=22, username=None, password=None, pkey=None, 
+                 key_filename=None, timeout=10, retries=3, retry_delay=5, logger=None):
+        """
+        A safe wrapper around Paramiko's SFTPClient.
+
+        Args:
+            host (str): SFTP server hostname or IP.
+            port (int): SFTP server port (default 22).
+            username (str): SSH username.
+            password (str): SSH password (optional if using key).
+            pkey (str): Paramiko PKey object for key auth.
+            key_filename (str): Path to private key file.
+            timeout (int): Connection timeout in seconds.
+            retries (int): Retry attempts on failure.
+            retry_delay (int): Delay between retries (seconds).
+            logger (logging.Logger): Optional logger instance.
+        """
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.pkey = pkey
+        self.key_filename = key_filename
+        self.timeout = timeout
+        self.retries = retries
+        self.retry_delay = retry_delay
+        self.logger = logger or logging.getLogger(__name__)
+        
+        self.transport = None
+        self.sftp = None
+
+    def connect(self):
+        """Establish SFTP connection with retries."""
+        attempt = 0
+        while attempt < self.retries:
+            try:
+                self.logger.info(f"Connecting to {self.host}:{self.port} (Attempt {attempt+1})")
+                transport = paramiko.Transport((self.host, self.port))
+                transport.connect(
+                    username=self.username,
+                    password=self.password,
+                    pkey=self.pkey,
+                    hostkey=None
+                )
+                self.transport = transport
+                self.sftp = paramiko.SFTPClient.from_transport(transport)
+                self.logger.info("SFTP connection established")
+                return self
+            except (paramiko.SSHException, socket.error) as e:
+                attempt += 1
+                self.logger.warning(f"SFTP connection failed: {e}. Retrying in {self.retry_delay}s...")
+                sleep(self.retry_delay)
+        raise ConnectionError(f"Failed to connect to {self.host} after {self.retries} attempts")
+
+    def close(self):
+        """Close SFTP and transport cleanly."""
+        if self.sftp:
+            self.sftp.close()
+            self.sftp = None
+        if self.transport:
+            self.transport.close()
+            self.transport = None
+        self.logger.info("SFTP connection closed")
+
+    @contextmanager
+    def session(self):
+        """Context manager for auto-connect and cleanup."""
+        try:
+            self.connect()
+            yield self
+        finally:
+            self.close()
+
+    def upload(self, local_path, remote_path):
+        """Upload a file to the SFTP server."""
+        self.logger.info(f"Uploading {local_path} → {remote_path}")
+        self.sftp.put(local_path, remote_path)
+        self.logger.info("Upload complete")
+
+    def download(self, remote_path, local_path):
+        """Download a file from the SFTP server."""
+        self.logger.info(f"Downloading {remote_path} → {local_path}")
+        self.sftp.get(remote_path, local_path)
+        self.logger.info("Download complete")
+
+    def listdir(self, path="."):
+        """List directory contents on SFTP server."""
+        return self.sftp.listdir(path)
+
+    def remove(self, remote_path):
+        """Remove a file from SFTP server."""
+        self.logger.info(f"Removing {remote_path}")
+        self.sftp.remove(remote_path)
+        self.logger.info("File removed")
+
+```
+
+```
 Thank you for reaching out. We’re aware of the issue and are actively working on a resolution. Our team is prioritizing this, and I’ll provide you with an update as soon as it’s resolved.
 
 If there’s a specific deadline or additional details you’d like to share, please let me know, and we’ll do our best to accommodate.
