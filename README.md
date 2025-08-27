@@ -888,6 +888,35 @@ class SFTPClient:
         self.sftp.remove(remote_path)
         self.logger.info("File removed")
 
+    def mkdir_p(self, remote_path, mode=0o700):
+    """
+    Recursively create directories on the SFTP server (like mkdir -p).
+    Directories will be owned by the SFTP user with full permissions.
+    
+    Args:
+        remote_path (str): Full remote directory path.
+        mode (int): Directory permission bits (default 0o700).
+    """
+    import posixpath
+
+    dirs = []
+    head = remote_path
+    while len(head) > 1:
+        head, tail = posixpath.split(head)
+        if tail:
+            dirs.append(posixpath.join(head, tail))
+        else:
+            break
+    dirs = dirs[::-1]  # ensure parent → child order
+
+    for d in dirs:
+        try:
+            self.sftp.stat(d)  # check if exists
+        except FileNotFoundError:
+            self.logger.info(f"Creating directory {d} with mode {oct(mode)}")
+            self.sftp.mkdir(d, mode=mode)
+
+
 ```
 
 ```
