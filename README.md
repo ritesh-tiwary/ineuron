@@ -926,3 +926,51 @@ If there’s a specific deadline or additional details you’d like to share, pl
 
 Thank you for your patience.
 ```
+```
+============================================================
+/* STEP: 1 */
+/* Name: rule!chunkFile
+   Inputs: file (Document), chunkSizeMB (Number) */
+
+=load(
+  local!bytes: a!documentToBinary(ri!file),
+  local!chunkSize: tointeger(ri!chunkSizeMB) * 1024 * 1024,
+  local!totalSize: length(local!bytes),
+
+  /* number of chunks */
+  local!chunksCount: ceiling(
+    division(local!totalSize, local!chunkSize)
+  ),
+
+  /* forEach returns list of binary chunks */
+  a!forEach(
+    items: enumerate(local!chunksCount),
+    expression: mid(
+      local!bytes,
+      (fv!index - 1) * local!chunkSize + 1,
+      local!chunkSize
+    )
+  )
+)
+
+============================================================
+
+/* STEP: 2 */
+/* Chunk file */
+local!chunks: rule!chunkFile(file: ri!file, chunkSizeMB: 50)
+
+============================================================
+
+/* STEP: 3 */
+/* Upload each chunk */
+local!uploadResults: a!forEach(
+ items: enumerate(length(local!chunks)),
+ expression: rule!uploadWrapper(
+   uploadId: local!uploadId,
+   partNumber: fv!index,
+   chunkData: local!chunks[fv!index]
+ )
+)
+
+
+```
